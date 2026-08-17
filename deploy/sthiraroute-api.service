@@ -1,0 +1,16 @@
+[Unit]
+Description=SthiraRoute API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/sthiraroute/apps/api
+Environment=PYTHONPATH=/var/www/sthiraroute/apps/api
+EnvironmentFile=/var/www/sthiraroute/apps/api/.env
+ExecStart=/var/www/sthiraroute/apps/api/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
