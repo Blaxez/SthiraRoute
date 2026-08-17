@@ -290,6 +290,46 @@ def tools_for(targets: list[str] | None = None) -> list[dict]:
                     ),
                     "parameters": {"type": "OBJECT", "properties": {}},
                 },
+                {
+                    "name": "run_control",
+                    "description": (
+                        "Press a real board control for the dispatcher. Use this when "
+                        "they ask you to start, restart, reset, plan, approve, rewind, "
+                        "play or pause — do not only highlight the button and ask them "
+                        "to click. Call it, then say what is happening."
+                    ),
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "action": {
+                                "type": "STRING",
+                                "enum": [
+                                    "start_day",
+                                    "reset_demo",
+                                    "prepare",
+                                    "plan",
+                                    "approve",
+                                    "rewind",
+                                    "play",
+                                    "pause",
+                                    "open_lab",
+                                ],
+                                "description": (
+                                    "start_day = plan+dispatch+run from 06:00 (also "
+                                    "restarts after shift over). reset_demo = wipe and "
+                                    "rebuild. prepare/plan/approve = Lab plan steps. "
+                                    "rewind = clock to 06:00 keeping routes. "
+                                    "play/pause = shift clock. open_lab = open Lab."
+                                ),
+                            },
+                            "note": {
+                                "type": "STRING",
+                                "description": "Short line shown with the highlight.",
+                            },
+                        },
+                        "required": ["action"],
+                    },
+                },
             ]
         }
     ]
@@ -330,7 +370,12 @@ def system_prompt(target_brief: str = "") -> str:
         "- Desks (Dispatch / Dock / Driver / Track) are the same committed plan, four jobs.\n"
         "- Lab is for 'what if': breakdowns, rush orders, curfew toggles, cost explain.\n"
         "You are driving this screen, not describing a screenshot of it. Move it:\n"
-        "- When you mention a control, call highlight so the board points at it. "
+        "- When they ask you to start, restart, reset, re-plan, approve, rewind, "
+        "play or pause — call run_control with that action. Do not refuse and ask "
+        "them to click. After the control fires, say what is now on screen.\n"
+        "- When the shift is over (clock at 22:00), start_day begins a fresh day "
+        "from 06:00. That is the answer to 'restart the shift/day'.\n"
+        "- When you mention a control, also call highlight so the board points at it. "
         "Use tour when you are walking someone through more than two things.\n"
         "- Loading, stacking, LIFO, axle balance, 'show me MH-03', 'what is on that "
         "truck' — open_deck(code). It opens the 3D deck viewer, and calling it again "
@@ -388,7 +433,13 @@ def compact_snapshot(db, extra: dict | None = None) -> dict[str, Any]:
     return {
         "shift_clock": sim.get("clock"),
         "shift_running": sim.get("running"),
-        "shift_over": sim.get("shift_over"),
+        "shift_over": bool(sim.get("shift_over")),
+        "can_start_or_restart": True,
+        "controls": (
+            "run_control(start_day) starts or restarts the operating day from 06:00; "
+            "reset_demo wipes data; prepare/plan/approve are Lab plan steps; "
+            "play/pause drive the shift clock; open_lab opens Lab."
+        ),
         "autopilot": sim.get("autopilot"),
         "city": city.get("label") or city.get("id"),
         "traffic_kmh": traffic.get("speed_kmh"),

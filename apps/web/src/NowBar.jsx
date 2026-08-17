@@ -60,23 +60,34 @@ export default function NowBar({
         {!dispatched ? (
           <button
             className="demo-start"
+            data-hl="start"
             onClick={onStart}
             disabled={!!busy}
             title="Plan, load and dispatch the day  (press P)"
           >
             {busy === "demo" || busy === "prepare" ? "Planning…" : "Start the day"}
           </button>
+        ) : sim?.shift_over ? (
+          <button
+            className="demo-start"
+            data-hl="start"
+            onClick={onStart}
+            disabled={!!busy}
+            title="Plan a fresh day from 06:00  (press P)"
+          >
+            {busy === "demo" || busy === "prepare" ? "Planning…" : "New day"}
+          </button>
         ) : (
           <>
             <button
               className={`sb-play${running ? " on" : ""}`}
+              data-hl="play"
               onClick={onPlay}
-              disabled={sim?.shift_over && !running}
               title={running ? "Pause  (space)" : "Run the day  (space)"}
             >
               {running ? "Pause" : "Run the day"}
             </button>
-            <div className="sb-speeds" role="group" aria-label="Playback speed">
+            <div className="sb-speeds" role="group" aria-label="Playback speed" data-hl="speed">
               {SPEEDS.map((s) => (
                 <button
                   key={s.id}

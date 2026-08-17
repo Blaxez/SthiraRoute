@@ -585,6 +585,19 @@ export default function App() {
     }
   }, [shipments, vehicles]);
 
+  const boardActions = useRef({});
+  boardActions.current = {
+    startDay,
+    resetDemo,
+    prepare,
+    runPlan,
+    approve,
+    rewind,
+    togglePlay,
+    setLabOpen,
+    setSimRunning,
+  };
+
   const onAskAction = useCallback((act) => {
     const name = act?.name;
     const args = act?.args || {};
@@ -597,8 +610,6 @@ export default function App() {
       );
     }
     if (name === "focus_map") {
-      // The deck viewer is a full-screen overlay: moving the camera behind it
-      // is a move nobody sees.
       closeLoadPlan();
       focusOnMap({ kind: args.kind || "vehicle", code: args.code });
       if (args.code) pushGuide([{ target: `${args.kind || "vehicle"}:${args.code}`, note: args.note }]);
@@ -614,7 +625,45 @@ export default function App() {
       closeLoadPlan();
       setLabOpen(false);
     }
-  }, [focusOnMap, openDeckByCode, pushGuide]);
+    if (name === "run_control") {
+      const action = String(args.action || "");
+      const ba = boardActions.current;
+      const note = args.note;
+      if (action === "start_day") {
+        ba.startDay?.();
+        pushGuide([{ target: "start", note: note || "Starting a fresh day from 06:00" }]);
+      } else if (action === "reset_demo") {
+        ba.resetDemo?.();
+        ba.setLabOpen?.(true);
+        pushGuide([{ target: "lab", note: note || "Demo reset" }]);
+      } else if (action === "prepare") {
+        ba.prepare?.();
+        ba.setLabOpen?.(true);
+        pushGuide([{ target: "lab", note: note || "Preparing the shift" }]);
+      } else if (action === "plan") {
+        ba.runPlan?.();
+        ba.setLabOpen?.(true);
+        pushGuide([{ target: "lab", note: note || "Building routes" }]);
+      } else if (action === "approve") {
+        ba.approve?.();
+        ba.setLabOpen?.(true);
+        pushGuide([{ target: "lab", note: note || "Approving the plan" }]);
+      } else if (action === "rewind") {
+        ba.rewind?.();
+        pushGuide([{ target: "clock", note: note || "Clock back to 06:00" }]);
+      } else if (action === "play") {
+        // Ensure running
+        if (!simRunning) ba.togglePlay?.();
+        pushGuide([{ target: "play", note: note || "Running the day" }]);
+      } else if (action === "pause") {
+        if (simRunning) ba.togglePlay?.();
+        pushGuide([{ target: "play", note: note || "Paused" }]);
+      } else if (action === "open_lab") {
+        ba.setLabOpen?.(true);
+        pushGuide([{ target: "lab", note: note || "Lab" }]);
+      }
+    }
+  }, [focusOnMap, openDeckByCode, pushGuide, simRunning]);
 
   // The officer's whole control surface, reachable without spending a Gemini
   // call. The smoke suite drives the tools through this, which is the only way
@@ -881,7 +930,7 @@ function Gate({ city, busy, onStart }) {
         Plan, load, and dispatch the fleet. The bright plate is the
         <b> shift clock</b> (06:00–22:00), not your watch.
       </p>
-      <button className="demo-start" onClick={onStart} disabled={!!busy}>
+      <button className="demo-start" data-hl="start" onClick={onStart} disabled={!!busy}>
         {busy === "demo" || busy === "prepare" ? "Planning…" : "Start the day"}
       </button>
     </div>
