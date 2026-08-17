@@ -11,9 +11,8 @@ import { targetBrief, targetIds } from "./guide.js";
 
 const STARTERS = [
   "What am I looking at?",
-  "Why is that red band on the timeline?",
-  "What just happened to the plan?",
-  "Which truck is late, and why?",
+  "Which truck is late?",
+  "Walk me through the board",
 ];
 
 /**
@@ -28,7 +27,7 @@ const Assistant = forwardRef(function Assistant(
   const [messages, setMessages] = useState(() => [
     {
       role: "officer",
-      text: "Ask about the clock, a truck, a red band, or a number. I will point at it.",
+      text: "Ask about a truck, the clock, or a red band — I point while I answer. Tap the orb to speak.",
     },
   ]);
   const [draft, setDraft] = useState("");
@@ -37,6 +36,7 @@ const Assistant = forwardRef(function Assistant(
   const [err, setErr] = useState("");
   const scroller = useRef(null);
   const liveRef = useRef(null);
+  const abortRef = useRef(null);
   const ctxRef = useRef(context);
   ctxRef.current = context;
 
@@ -73,20 +73,46 @@ const Assistant = forwardRef(function Assistant(
     voice.state = "idle";
   }, []);
 
-  const payload = (msg) => ({
-    message: msg,
-    ...ctxRef.current,
-    targets: targetIds(),
-    target_brief: targetBrief(),
-  });
+  const payload = (msg) => {
+    const c = ctxRef.current || {};
+    // Lean board: ids + status only — lat/lon and full windows bloat every turn.
+    return {
+      message: msg,
+      view: c.view,
+      selected: c.selected,
+      decision: c.decision,
+      kpis: c.kpis,
+      vehicles: (c.vehicles || []).slice(0, 14).map((v) => ({
+        id: v.id, code: v.code, status: v.status,
+        vehicle_type: v.vehicle_type || v.kind,
+      })),
+      shipments: (c.shipments || []).slice(0, 24).map((s) => ({
+        id: s.id, code: s.code, status: s.status, priority: s.priority,
+        demand_kg: s.demand_kg, late_min: s.late_min,
+      })),
+      overlays: (c.overlays || []).slice(0, 12).map((o) => ({
+        id: o.id, name: o.name, active: o.active, kind: o.kind,
+      })),
+      targets: targetIds(),
+      target_brief: targetBrief(),
+    };
+  };
+
+  const markTried = () => {
+    try { localStorage.setItem("sr.askCoach", "1"); } catch { /* */ }
+  };
 
   const send = async (text) => {
     const msg = (text || draft).trim();
     if (!msg || busy) return;
+    markTried();
     setDraft("");
     setMessages((m) => [...m, { role: "you", text: msg }]);
     setBusy(true);
     setErr("");
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
     // One empty officer line, filled in as the answer streams into it.
     let slot = -1;
     setMessages((m) => {
@@ -96,11 +122,23 @@ const Assistant = forwardRef(function Assistant(
     const write = (fn) =>
       setMessages((m) => m.map((x, i) => (i === slot ? fn(x) : x)));
 
+    // Coalesce token paints so the log does not re-render on every SSE byte.
+    let pending = "";
+    let flushTimer = 0;
+    const flushDelta = () => {
+      flushTimer = 0;
+      if (!pending) return;
+      const chunk = pending;
+      pending = "";
+      write((x) => ({ ...x, text: x.text + chunk, pending: false }));
+    };
+
     try {
       const res = await fetch("/api/assistant/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload(msg)),
+        signal: ac.signal,
       });
       if (!res.ok || !res.body) throw new Error(`briefing failed (${res.status})`);
       const reader = res.body.getReader();
@@ -119,7 +157,8 @@ const Assistant = forwardRef(function Assistant(
           try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
           if (ev.type === "delta") {
             got = true;
-            write((x) => ({ ...x, text: x.text + ev.text, pending: false }));
+            pending += ev.text;
+            if (!flushTimer) flushTimer = window.setTimeout(flushDelta, 40);
           } else if (ev.type === "action") {
             onAction?.(ev);
           } else if (ev.type === "error") {
@@ -129,12 +168,15 @@ const Assistant = forwardRef(function Assistant(
           }
         }
       }
+      flushDelta();
       if (!got) write((x) => ({ ...x, text: "No reply came back.", pending: false, bad: true }));
     } catch (e) {
+      if (e?.name === "AbortError") return;
       const m = String(e.message || e);
       setErr(m);
       write((x) => ({ ...x, text: x.text || m, pending: false, bad: !x.text }));
     } finally {
+      clearTimeout(flushTimer);
       setBusy(false);
     }
   };
@@ -146,6 +188,7 @@ const Assistant = forwardRef(function Assistant(
       setLive("off");
       return;
     }
+    markTried();
     setErr("");
     setLive("connecting");
     try {
@@ -157,8 +200,6 @@ const Assistant = forwardRef(function Assistant(
         onSaid: (text) =>
           setMessages((m) => joinTurn(m, "officer", text)),
         onAction,
-        // A reconnect is not a failure the dispatcher has to act on — it is
-        // the session rolling over. Say so and keep the orb live.
         onReconnecting: () => setLive("connecting"),
         onError: (message) => {
           setErr(message);
@@ -191,8 +232,8 @@ const Assistant = forwardRef(function Assistant(
     <aside className={`ask${aside ? " aside" : ""}`} aria-label="Shift briefing">
       <header className="ask-head">
         <div>
-          <b>Briefing</b>
-          <span>Explains the board. Does not drive the trucks.</span>
+          <b>Ask</b>
+          <span>Points at the board · does not drive trucks</span>
         </div>
         <button className="insp-close" onClick={onClose} aria-label="Close briefing">✕</button>
       </header>
@@ -231,7 +272,7 @@ const Assistant = forwardRef(function Assistant(
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Ask why a truck is waiting, or what the needle means"
+          placeholder="Ask about a truck, the clock, or a red band"
           aria-label="Question about the shift"
         />
         <button type="submit" className="ask-send" disabled={busy || !draft.trim()}>
@@ -318,7 +359,7 @@ const PUMP = `
 class Pump extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.buf = new Int16Array(2048);
+    this.buf = new Int16Array(4096);
     this.n = 0;
     this.gate = false;
     this.port.onmessage = (e) => { this.gate = !!e.data.gate; };
@@ -369,6 +410,7 @@ async function startLive(slot, context, hooks) {
   const audio = {
     in: null, out: null, mic: null, node: null, meter: null,
     sock: null, next: 0, queued: [], gated: false, gateTimer: 0,
+    onDrain: () => hooks.onTalking?.(false),
   };
   let wanted = true;
   let handle = null;   // session-resumption handle from the API
@@ -446,10 +488,8 @@ async function startLive(slot, context, hooks) {
         hooks.onTalking?.(false);
       }
       if (msg.type === "turn_complete") {
-        // turn_complete means the model stopped generating, not that the
-        // speakers went quiet — the gate opens when playback actually drains.
+        // Model finished generating — keep "talking" until playback drains.
         armGate(audio);
-        hooks.onTalking?.(false);
       }
       if (msg.type === "error") hooks.onError?.(msg.message || "Live error");
     };
@@ -469,13 +509,16 @@ async function startLive(slot, context, hooks) {
     };
 
     clearInterval(ping);
-    // Keep the officer's copy of the board fresh without putting words in the
-    // dispatcher's mouth: the API holds it and attaches it to the next question.
+    // Fresh board on meaningful change only — a 15s full dump competed with audio.
+    let lastSig = "";
     ping = setInterval(() => {
-      if (sock.readyState === WebSocket.OPEN) {
-        sock.send(JSON.stringify({ type: "context", context: context() }));
-      }
-    }, 15000);
+      if (sock.readyState !== WebSocket.OPEN) return;
+      const ctx = context();
+      const sig = `${ctx.view}|${ctx.selected}|${(ctx.vehicles || []).length}|${(ctx.kpis?.plan?.committed_routes) ?? ""}`;
+      if (sig === lastSig) return;
+      lastSig = sig;
+      sock.send(JSON.stringify({ type: "context", context: ctx }));
+    }, 8000);
   };
 
   await connect();
@@ -538,7 +581,7 @@ function armGate(audio) {
   const left = ctx ? Math.max(0, (audio.next - ctx.currentTime) * 1000) : 0;
   // A turn that is cut short never sends turn_complete, so the gate must also
   // be able to open itself once there is nothing left to play.
-  audio.gateTimer = setTimeout(() => gate(audio, false), left + 220);
+  audio.gateTimer = setTimeout(() => gate(audio, false), left + 50);
 }
 
 function flush(audio) {
@@ -554,10 +597,14 @@ function flush(audio) {
 function playPcm(audio, data, mime) {
   const rate = Number(/rate=(\d+)/.exec(mime || "")?.[1]) || 24000;
   const raw = atob(data);
-  const buf = new ArrayBuffer(raw.length);
-  const view = new Uint8Array(buf);
-  for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i);
-  const samples = new Int16Array(buf);
+  const n = raw.length;
+  const bytes = new Uint8Array(n);
+  // Chunked fill — faster than a single giant loop on long replies.
+  for (let i = 0; i < n; i += 0x4000) {
+    const end = Math.min(i + 0x4000, n);
+    for (let j = i; j < end; j++) bytes[j] = raw.charCodeAt(j);
+  }
+  const samples = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 1);
   const ctx = outCtx(audio, rate);
   const frame = ctx.createBuffer(1, samples.length, rate);
   const ch = frame.getChannelData(0);
@@ -565,12 +612,15 @@ function playPcm(audio, data, mime) {
   const src = ctx.createBufferSource();
   src.buffer = frame;
   src.connect(audio.meter || ctx.destination);
-  // A stale schedule pointer is how a reply ends up playing over the next one.
   const start = Math.max(ctx.currentTime + 0.02, audio.next || 0);
   src.start(start);
   audio.next = start + frame.duration;
   audio.queued.push(src);
   src.onended = () => {
     audio.queued = audio.queued.filter((s) => s !== src);
+    if (!audio.queued.length) {
+      gate(audio, false);
+      audio.onDrain?.();
+    }
   };
 }

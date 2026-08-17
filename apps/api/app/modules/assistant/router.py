@@ -116,10 +116,10 @@ async def live(ws: WebSocket, db: Session = Depends(get_db)):
                     uri,
                     additional_headers={"Content-Type": "application/json"},
                     max_size=8 * 1024 * 1024,
-                    open_timeout=20,
+                    open_timeout=8,
                 )
             except TypeError:
-                sock = await websockets.connect(uri, max_size=8 * 1024 * 1024, open_timeout=20)
+                sock = await websockets.connect(uri, max_size=8 * 1024 * 1024, open_timeout=8)
             await sock.send(json.dumps(
                 live_setup_message(
                     snap,
@@ -129,7 +129,7 @@ async def live(ws: WebSocket, db: Session = Depends(get_db)):
                     model=model,
                 )
             ))
-            ack = await asyncio.wait_for(sock.recv(), timeout=20)
+            ack = await asyncio.wait_for(sock.recv(), timeout=8)
             body = json.loads(ack) if isinstance(ack, (str, bytes)) else ack
             if body.get("setupComplete") is None:
                 await sock.close()
@@ -139,25 +139,51 @@ async def live(ws: WebSocket, db: Session = Depends(get_db)):
         chain = live_model_chain()
         chosen = None
         last_err: Exception | None = None
-        for key in keys:
+        # Probe candidates in parallel — sequential 20s×N dials made Connecting… feel broken.
+        async def try_dial(key: str, model: str):
             uri = f"{LIVE_WS}?key={key}"
-            for model in chain:
-                try:
-                    gemini = await dial(model, uri)
+            try:
+                sock = await dial(model, uri)
+                return key, model, sock, None
+            except Exception as e:  # noqa: BLE001
+                return key, model, None, e
+
+        probes = [(key, model) for key in keys[:4] for model in chain[:3]]
+        # Prefer first key+model, then race the rest if it fails quickly.
+        primary = await try_dial(probes[0][0], probes[0][1])
+        if primary[2] is not None:
+            _, chosen, gemini, _ = primary
+        else:
+            last_err = primary[3]
+            msg = str(last_err or "").lower()
+            if "429" in msg or "quota" in msg or "resource_exhausted" in msg:
+                mark_key_limited(probes[0][0])
+            elif "401" in msg or "403" in msg or "api key" in msg:
+                mark_key_limited(probes[0][0], bad=True)
+            rest = await asyncio.gather(
+                *[try_dial(k, m) for k, m in probes[1:]],
+                return_exceptions=False,
+            )
+            for key, model, sock, err in rest:
+                if sock is not None and gemini is None:
+                    gemini = sock
                     chosen = model
+                    # Close losers so we don't leak sockets.
+                    for k2, m2, s2, _e2 in rest:
+                        if s2 is not None and s2 is not sock:
+                            try:
+                                await s2.close()
+                            except Exception:  # noqa: BLE001
+                                pass
                     break
-                except Exception as e:  # noqa: BLE001
-                    last_err = e
-                    msg = str(e).lower()
-                    log.warning("live key …%s model %s refused: %s", key[-6:], model, str(e)[:200])
-                    if "429" in msg or "quota" in msg or "resource_exhausted" in msg:
+                if err is not None:
+                    last_err = err
+                    em = str(err).lower()
+                    log.warning("live key …%s model %s refused: %s", key[-6:], model, str(err)[:200])
+                    if "429" in em or "quota" in em or "resource_exhausted" in em:
                         mark_key_limited(key)
-                        break
-                    if "401" in msg or "403" in msg or "api key" in msg:
+                    elif "401" in em or "403" in em or "api key" in em:
                         mark_key_limited(key, bad=True)
-                        break
-            if chosen:
-                break
         if not chosen:
             raise last_err or RuntimeError("live: every key and model refused")
         await ws.send_json({"type": "ready", "model": chosen})
@@ -182,7 +208,7 @@ async def live(ws: WebSocket, db: Session = Depends(get_db)):
                         }
                     }))
                 elif kind == "text" and msg.get("text"):
-                    board = json.dumps(latest["context"], default=str)[:3000]
+                    board = json.dumps(latest["context"], default=str)[:1800]
                     await gemini.send(json.dumps({
                         "clientContent": {
                             "turns": [{
@@ -258,28 +284,27 @@ async def live(ws: WebSocket, db: Session = Depends(get_db)):
                 # for the world to answer — the voice would point at the clock
                 # and then go silent mid-sentence.
                 if calls:
+                    function_responses = []
+                    for fc in calls:
+                        name = fc.get("name")
+                        if name in DATA_TOOLS:
+                            # Sync SQLite must not block the audio event loop.
+                            response = await asyncio.to_thread(
+                                run_tool,
+                                db,
+                                name,
+                                fc.get("args") or {},
+                                latest["context"],
+                            )
+                        else:
+                            response = {"ok": True}
+                        function_responses.append({
+                            "id": fc.get("id"),
+                            "name": name,
+                            "response": response,
+                        })
                     await gemini.send(json.dumps({
-                        "toolResponse": {
-                            "functionResponses": [
-                                {
-                                    "id": fc.get("id"),
-                                    "name": fc.get("name"),
-                                    # A data tool answers with the board's real
-                                    # numbers; a screen action only needs an ack.
-                                    "response": (
-                                        run_tool(
-                                            db,
-                                            fc.get("name"),
-                                            fc.get("args") or {},
-                                            latest["context"],
-                                        )
-                                        if fc.get("name") in DATA_TOOLS
-                                        else {"ok": True}
-                                    ),
-                                }
-                                for fc in calls
-                            ]
-                        }
+                        "toolResponse": {"functionResponses": function_responses}
                     }))
 
                 if sc.get("turnComplete"):

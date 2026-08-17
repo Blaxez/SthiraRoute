@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Assistant from "./Assistant.jsx";
 import Blob from "./Blob.jsx";
 import DockView from "./DockView.jsx";
@@ -546,7 +546,12 @@ export default function App() {
   const pushGuide = useCallback((steps) => {
     const clean = (steps || []).filter((s) => s?.target);
     if (!clean.length) return;
-    setGuide((g) => (g ? { key: g.key, steps: [...g.steps, ...clean] } : { key: Date.now(), steps: clean }));
+    setGuide((g) => {
+      const next = g ? [...g.steps, ...clean] : [...clean];
+      // Cap the queue so a long talk cannot veil the board for minutes.
+      const stepsOut = next.length > 5 ? next.slice(next.length - 5) : next;
+      return { key: g?.key || Date.now(), steps: stepsOut };
+    });
   }, []);
 
   // Same debug handle as window.__map: the smoke suite drives the guide
@@ -618,27 +623,24 @@ export default function App() {
     window.__act = onAskAction;
   }, [onAskAction]);
 
-  const askContext = {
+  const askContext = useMemo(() => ({
     view,
     selected,
     decision,
     kpis,
     vehicles: vehicles.map((v) => ({
-      id: v.id, code: v.code, status: v.status, lat: v.lat, lon: v.lon,
+      id: v.id, code: v.code, status: v.status,
       vehicle_type: v.vehicle_type || v.kind,
     })),
     shipments: shipments.map((s) => ({
       id: s.id, code: s.code, customer_name: s.customer_name, status: s.status,
-      priority: s.priority, tw_start_min: s.tw_start_min, tw_end_min: s.tw_end_min,
-      // The API calls it demand_kg. Sending weight_kg meant every weight the
-      // officer was asked for came back "not specified".
-      demand_kg: s.demand_kg, service_min: s.service_min, lat: s.lat, lon: s.lon,
+      priority: s.priority, demand_kg: s.demand_kg, late_min: s.late_min,
     })),
     overlays: overlays.map((o) => ({
       id: o.id, name: o.name, active: o.active, kind: o.kind,
       ban_start_min: o.ban_start_min, ban_end_min: o.ban_end_min,
     })),
-  };
+  }), [view, selected, decision, kpis, vehicles, shipments, overlays]);
 
   const plan = kpis?.plan;
   const dispatched = (plan?.committed_routes ?? 0) > 0 || committed.length > 0;
@@ -728,8 +730,8 @@ export default function App() {
         <TrackView view={view} onChange={goDesk} sim={sim} live={live} />
       )}
 
-      {view === "dispatch" && (
-        <>
+      {/* Keep the map mounted across desks — remounting MapLibre mid-tour blanked the board. */}
+      <div className={`desk-dispatch${view === "dispatch" ? "" : " is-parked"}`}>
           <div className="stage">
             <FleetRail
               vehicles={vehicles}
@@ -791,8 +793,7 @@ export default function App() {
             onSelect={setSelected}
             nowMin={sim?.clock_min}
           />
-        </>
-      )}
+      </div>
     </div>
 
       {guide && (
@@ -826,6 +827,12 @@ export default function App() {
         // is free to be dragged and to dodge without carrying a control that
         // people then have to chase around the screen.
         onToggle={() => askRef.current?.toggleLive()}
+        onOpenAsk={() => setAskOpen(true)}
+        hint={
+          liveVoice === "on" || liveVoice === "talking"
+            ? "Listening — tap to stop · drag to move"
+            : "Tap to talk · Ask in the header to type"
+        }
       />
 
       <Lab
@@ -868,13 +875,11 @@ export default function App() {
 function Gate({ city, busy, onStart }) {
   return (
     <div className="gate" role="dialog" aria-label="Start the day">
-      <p className="gate-kicker">{city || "City"} · 06:00 · nothing dispatched yet</p>
-      <h1>Watch one operating day</h1>
+      <p className="gate-kicker">{city || "City"} · 06:00</p>
+      <h1>Start the operating day</h1>
       <p>
-        The map is empty because no truck has a job yet. Start the day to
-        assign every order, load the fleet, and run the shift. The bright
-        plate is the <b>shift clock</b> (06:00–22:00), not your watch. The
-        playhead on the timeline is the same clock.
+        Plan, load, and dispatch the fleet. The bright plate is the
+        <b> shift clock</b> (06:00–22:00), not your watch.
       </p>
       <button className="demo-start" onClick={onStart} disabled={!!busy}>
         {busy === "demo" || busy === "prepare" ? "Planning…" : "Start the day"}

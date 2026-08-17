@@ -19,13 +19,13 @@ import { focusRect, resolveTarget } from "./guide.js";
  * sentence itself changes.
  */
 
-const HOLD_MIN = 2600;
-const HOLD_MAX = 9000;
+const HOLD_MIN = 1200;
+const HOLD_MAX = 2800;
 const PAD = 8;
 const MIN_HOLE = 52; // smallest hole that still reads as a highlight
 
 const holdFor = (note) =>
-  Math.min(HOLD_MAX, Math.max(HOLD_MIN, 1800 + (note || "").length * 48));
+  Math.min(HOLD_MAX, Math.max(HOLD_MIN, 900 + (note || "").length * 28));
 
 const reduced = () =>
   typeof matchMedia === "function" &&
@@ -122,13 +122,13 @@ export default function Guide({ steps, view, onDesk, onIdle, onFocusCode }) {
       if (!el) {
         // Give a just-switched desk a moment; then give up on this step so a
         // stale target cannot wedge the queue.
-        if (performance.now() - start > 1800) return advance();
+        if (performance.now() - start > 450) return advance();
         raf.current = requestAnimationFrame(track);
         return;
       }
       const r = el.getBoundingClientRect();
       if (r.width < 1 && r.height < 1) {
-        if (performance.now() - start > 1800) return advance();
+        if (performance.now() - start > 450) return advance();
         raf.current = requestAnimationFrame(track);
         return;
       }
@@ -148,7 +148,7 @@ export default function Guide({ steps, view, onDesk, onIdle, onFocusCode }) {
       // A hidden tab throttles rAF, which would leave the hole frozen halfway
       // between two targets when the dispatcher comes back. Snap instead.
       const s = seat.current;
-      const k = !s || reduced() || document.hidden ? 1 : 0.22;
+      const k = !s || reduced() || document.hidden ? 1 : 0.48;
       seat.current = s
         ? {
             x: s.x + (want.x - s.x) * k,
@@ -162,7 +162,8 @@ export default function Guide({ steps, view, onDesk, onIdle, onFocusCode }) {
       focusRect.current = { ...cur, note: step.note || "" };
       paint(cur);
 
-      if (performance.now() - start < 250) {
+      // Map targets already get easeTo from focus_map — smooth scroll fights the camera.
+      if (performance.now() - start < 250 && !String(step.target || "").includes(":")) {
         const vh = innerHeight;
         if (r.top < 40 || r.bottom > vh - 40) {
           el.scrollIntoView({

@@ -7,7 +7,7 @@
    telling you the condition of a promise. Everything else — panels, rules,
    buttons, type — lives on a neutral ramp from true black to near-white.
 
-     silver    act here — start, playhead, focus, the guide's pointer
+     silver    act here — start, playhead, focus, the officer's pointer
      sage      on plan, committed, on time
      vermilion no-entry, late, broken
      ochre     needs a human
@@ -270,7 +270,7 @@ button { font-family: inherit; font-size: inherit; color: inherit; }
   color: var(--silver);
 }
 
-/* Typing to the guide sits with the other header controls. The dot is the
+/* Typing to the officer sits with the other header controls. The dot is the
    only thing that changes when the microphone is open, so the button does not
    move or resize while someone is talking to it. */
 .ask-toggle {
@@ -3340,7 +3340,7 @@ body.resizing-v { cursor: ns-resize; user-select: none; }
 }
 
 /* -------------------------------------------------------------- the blob --
-   The guide's presence. Fixed and transform-positioned so dragging and
+   The officer's presence. Fixed and transform-positioned so dragging and
    dodging never touch layout. */
 
 .blob {
@@ -3358,26 +3358,82 @@ body.resizing-v { cursor: ns-resize; user-select: none; }
 
 .blob-hit {
   position: absolute;
-  inset: 20px;
+  /* Square hit area over the shell — a circular button paints a flat 2D disc on focus. */
+  inset: 22px;
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: 0;
   background: transparent;
   pointer-events: auto;
   cursor: grab;
   touch-action: none;
+  box-shadow: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
 }
 .blob-hit:active { cursor: grabbing; }
-.blob-hit:focus-visible { outline: 2px solid var(--silver); outline-offset: 4px; }
+.blob-hit:focus,
+.blob-hit:focus-visible,
+.blob.live .blob-hit,
+.blob.live .blob-hit:focus,
+.blob.live .blob-hit:focus-visible {
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  border: 0;
+}
 
-/* A ring while the microphone is open, so "it is listening" is legible from
-   across a room and not only from the shell's colour. */
-.blob.live .blob-hit {
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5), 0 0 22px rgba(255, 255, 255, 0.18);
+/* Soft first-run tip parked by the orb — dismisses itself after use. */
+.blob-tip {
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 168px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel, var(--raised));
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.4;
+  pointer-events: auto;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-data);
+  white-space: normal;
+}
+.blob-tip:hover { border-color: var(--silver); color: var(--text); }
+.blob-tip b {
+  display: block;
+  color: var(--silver);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+@media (max-width: 720px) {
+  .blob-tip {
+    right: auto;
+    left: 50%;
+    top: auto;
+    bottom: calc(100% + 8px);
+    transform: translateX(-50%);
+    max-width: 200px;
+  }
+}
+
+.desk-dispatch.is-parked {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0);
+  pointer-events: none;
+  opacity: 0;
 }
 
 /* ------------------------------------------------------------- the guide --
-   The guide points by dimming the room and cutting a hole. Nothing here
+   The officer points by dimming the room and cutting a hole. Nothing here
    takes a click: the board stays usable while it is being explained. */
 
 .guide {
@@ -3422,7 +3478,7 @@ body.resizing-v { cursor: ns-resize; user-select: none; }
   to { transform: scale(1); opacity: 0; }
 }
 
-/* The guide's arm: blob to target, so it is obvious who is pointing. */
+/* The officer's arm: blob to target, so it is obvious who is pointing. */
 .guide-link {
   stroke: var(--silver);
   stroke-width: 1.5;
@@ -3494,7 +3550,7 @@ body.resizing-v { cursor: ns-resize; user-select: none; }
   transition: transform 0.32s cubic-bezier(0.3, 0.7, 0.2, 1), opacity 0.24s ease;
 }
 
-/* While the guide is pointing at the board, the transcript is in the way of
+/* While the officer is pointing at the board, the transcript is in the way of
    the thing it is talking about. It leaves, and comes back with the answer. */
 .ask.aside {
   transform: translateX(calc(100% + 20px));
@@ -3512,13 +3568,18 @@ body.resizing-v { cursor: ns-resize; user-select: none; }
 }
 .ask-head b {
   display: block;
-  font-size: 13px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--silver);
+  font-weight: 700;
 }
 .ask-head span {
   display: block;
   font-size: 11px;
   color: var(--text-3);
-  margin-top: 2px;
+  margin-top: 3px;
+  line-height: 1.35;
 }
 .ask-warn {
   margin: 0;

@@ -590,7 +590,7 @@ async def _once(client, body: dict, stream: bool):
     sweeps = [(m, s) for s in range(2) for m in model_chain()]
     for model, sweep in sweeps:
         if sweep and model == sweeps[0][0]:
-            await asyncio.sleep(1.2)
+            await asyncio.sleep(0.35)
         tmpl = GEMINI_STREAM if stream else GEMINI_GENERATE
         url = tmpl.format(model=model)
         model_gone = False
@@ -692,8 +692,9 @@ async def converse(db, message: str, extra: dict | None = None, stream: bool = F
     convo = list(body["contents"])
     model_used = None
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        for _round in range(4):
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        # Two rounds is enough for highlight-then-speak; a 4×60s stack felt like a hang.
+        for _round in range(2):
             parts: list[dict] = []
             said = False
             failed = False
@@ -839,7 +840,7 @@ def live_setup_message(
                         "Call highlight while you talk, so the dispatcher's eye lands "
                         "on the thing you are naming.\n"
                         "Current snapshot:\n"
-                        + json.dumps(snap, ensure_ascii=False, default=str)[:6000]
+                        + json.dumps(snap, ensure_ascii=False, default=str)[:3200]
                     )
                 }
             ]
@@ -865,8 +866,8 @@ def live_setup_message(
             "automaticActivityDetection": {
                 "startOfSpeechSensitivity": "START_SENSITIVITY_LOW",
                 "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
-                "prefixPaddingMs": 60,
-                "silenceDurationMs": 900,
+                "prefixPaddingMs": 40,
+                "silenceDurationMs": 520,
             }
         },
     }

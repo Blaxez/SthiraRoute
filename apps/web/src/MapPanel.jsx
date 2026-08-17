@@ -82,6 +82,9 @@ export default function MapPanel({
   const trucks = useRef(new Map());
   const raf = useRef(0);
   const lastPaint = useRef(0);
+  const lastPaintKm = useRef(new Map());
+  const followFrame = useRef(0);
+  const lastFollowAt = useRef(0);
   const progressKm = useRef(new Map());
   const followRef = useRef(null);
   const paintRoutes = useRef(() => {});
@@ -590,6 +593,7 @@ export default function MapPanel({
 
     parkedAt.current = parked;
     applyParked();
+    lastPaintKm.current = new Map(progressKm.current);
     paintRoutes.current?.();
     paintFleet(m, trucks.current);
 
@@ -619,13 +623,26 @@ export default function MapPanel({
       });
       if (at - lastPaint.current > 180) {
         lastPaint.current = at;
-        paintRoutes.current?.();
+        // Skip setData unless some truck advanced enough to change the trail split.
+        if (routeProgressMoved(progressKm.current, lastPaintKm.current, 0.02)) {
+          lastPaintKm.current = new Map(progressKm.current);
+          paintRoutes.current?.();
+        }
         paintFleet(m, trucks.current);
       }
       const lead = followRef.current != null && trucks.current.get(followRef.current);
-      if (lead) m.setCenter(lead.at);
+      // Marker moves every frame; camera follow is cheaper at ~3rd frame / 100ms.
+      if (lead) {
+        followFrame.current += 1;
+        if (followFrame.current >= 3 || at - lastFollowAt.current >= 100) {
+          followFrame.current = 0;
+          lastFollowAt.current = at;
+          m.setCenter(lead.at);
+        }
+      }
       raf.current = running ? requestAnimationFrame(frame) : 0;
       if (!running) {
+        lastPaintKm.current = new Map(progressKm.current);
         paintRoutes.current?.();
         paintFleet(m, trucks.current);
       }
@@ -784,6 +801,16 @@ function pathKey(route) {
   return `${route.id}:${path.length}:${a[0].toFixed(4)},${a[1].toFixed(4)}:${b[0].toFixed(4)}`;
 }
 
+/** True if any vehicle’s path-km moved enough to warrant a route GeoJSON rewrite. */
+function routeProgressMoved(now, prev, minDelta) {
+  if (now.size !== prev.size) return true;
+  for (const [id, km] of now) {
+    const was = prev.get(id);
+    if (was == null || Math.abs(km - was) > minDelta) return true;
+  }
+  return false;
+}
+
 function targetKm(v, path, cum) {
   if (!cum) return v.path_progress_km || 0;
   const projected = projectOnPath(path, cum, v.lon, v.lat);
@@ -815,7 +842,7 @@ function nextStopLabel(route, shipById) {
 function truckNode(code) {
   const el = document.createElement("div");
   el.className = "mk mk-truck";
-  // The guide points at trucks by code, and the one worth pointing at is the
+  // The officer points at trucks by code, and the one worth pointing at is the
   // one on the road — the guide tracks this node as it moves.
   el.dataset.hl = `vehicle:${code}`;
   const body = document.createElement("i");

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { focusRect } from "./guide.js";
 import { C } from "./palette.js";
 
@@ -6,7 +6,7 @@ import { C } from "./palette.js";
  * The officer's presence: a rotating shell of particles that breathes with the
  * radio.
  *
- * Canvas 2D and 420 points — no WebGL library for one ornament. Points sit on
+ * Canvas 2D and ~280 points — no WebGL library for one ornament. Points sit on
  * a Fibonacci lattice (even coverage, no polar clumping), a two-term field
  * deforms the radius, and everything is depth-sorted and drawn from a cached
  * sprite so a frame costs well under a millisecond.
@@ -16,7 +16,7 @@ import { C } from "./palette.js";
  * nearest free side rather than sitting on top of the thing being explained.
  */
 
-const N = 560;
+const N = 280;
 const GOLDEN = Math.PI * (3 - Math.sqrt(5));
 const DEPTH = 3.1; // projection distance — larger is a flatter, calmer sphere
 
@@ -129,7 +129,7 @@ function parked() {
   return null;
 }
 
-export default function Blob({ open, listening, onToggle, hint }) {
+export default function Blob({ open, listening, onToggle, onOpenAsk, hint }) {
   const wrap = useRef(null);
   const cv = useRef(null);
   const hit = useRef(null);
@@ -137,10 +137,16 @@ export default function Blob({ open, listening, onToggle, hint }) {
   const placed = useRef(!!parked());
   const pos = useRef({ ...park.current });
   const drag = useRef(null);
-  // The frame loop is mounted once and never re-created, so it reads the
-  // panel's state through a ref rather than a stale closure.
   const openRef = useRef(open);
   openRef.current = open;
+  const [tip, setTip] = useState(() => {
+    try { return localStorage.getItem("sr.askCoach") !== "1"; } catch { return true; }
+  });
+
+  const dismissTip = () => {
+    setTip(false);
+    try { localStorage.setItem("sr.askCoach", "1"); } catch { /* */ }
+  };
 
   useEffect(() => {
     const canvas = cv.current;
@@ -190,12 +196,40 @@ export default function Blob({ open, listening, onToggle, hint }) {
     let live = 0;
     let last = performance.now();
     let raf = 0;
+    let idleFrames = 0;
+    // Cache panel rects — querying layout every frame thrashed the map + voice path.
+    let askEl = null;
+    let lpEl = null;
+    let askBox = null;
+    let lpBox = null;
+    let boxAt = 0;
+
+    const refreshBoxes = (now) => {
+      if (now - boxAt < 200 && askBox !== undefined) return;
+      boxAt = now;
+      askEl = openRef.current ? document.querySelector(".ask") : null;
+      lpEl = document.querySelector(".lp");
+      askBox = askEl ? askEl.getBoundingClientRect() : null;
+      lpBox = lpEl ? lpEl.getBoundingClientRect() : null;
+    };
 
     const frame = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
 
       const mood = MOODS[voice.state] || MOODS.idle;
+      const isIdle = voice.state === "idle" && !openRef.current && !drag.current && !focusRect.current;
+      // Idle chrome: skip every other frame to free the map/voice path.
+      if (isIdle) {
+        idleFrames += 1;
+        if (idleFrames % 2 === 1) {
+          raf = requestAnimationFrame(frame);
+          return;
+        }
+      } else {
+        idleFrames = 0;
+      }
+
       const drive =
         voice.state === "listening" ? levelOf(voice.inNode)
         : voice.state === "speaking" ? levelOf(voice.outNode)
@@ -223,13 +257,9 @@ export default function Blob({ open, listening, onToggle, hint }) {
           y1: f.y + f.h + R + 30 + 92, // + room for the callout
         });
       }
-      // Anything the dispatcher opened on purpose outranks the orb's favourite
-      // corner. The briefing panel's input row and the deck viewer's notes both
-      // live exactly where it likes to park.
-      const own = openRef.current ? document.querySelector(".ask") : null;
-      for (const el of [own, document.querySelector(".lp")]) {
-        if (!el) continue;
-        const b = el.getBoundingClientRect();
+      refreshBoxes(now);
+      for (const b of [askBox, lpBox]) {
+        if (!b) continue;
         want = shove(want, {
           x0: b.left - R - 14,
           y0: b.top - R - 14,
@@ -269,8 +299,6 @@ export default function Blob({ open, listening, onToggle, hint }) {
       for (let i = 0; i < N; i++) {
         const x0 = pts[i * 3], y0 = pts[i * 3 + 1], z0 = pts[i * 3 + 2];
         const ph = phase[i];
-        // Two octaves: a slow lobe that moves the silhouette, and a fine
-        // ripple across the surface. One octave alone stays a sphere.
         const n =
           Math.sin(x0 * 1.15 + t * 0.55) * Math.cos(y0 * 0.95 - t * 0.42) * 0.72 +
           Math.sin(z0 * 2.7 - t * 1.15 + ph) * 0.28;
@@ -286,15 +314,16 @@ export default function Blob({ open, listening, onToggle, hint }) {
         ss[i] = mood.size * p * grain[i];
         depth[i] = Z;
       }
-      order.sort((a, b) => depth[a] - depth[b]);
+      // Skip full depth sort when nearly idle — order barely matters for a calm shell.
+      if (!isIdle || idleFrames % 8 === 0) {
+        order.sort((a, b) => depth[a] - depth[b]);
+      }
 
       const img = sprite(hue);
       g.globalCompositeOperation = "lighter";
       for (let j = 0; j < N; j++) {
         const i = order[j];
-        const near = (depth[i] + 1) / 2; // 0 far, 1 near
-        // Steep falloff: the far hemisphere should read as depth, not as a
-        // second layer of dots competing with the front.
+        const near = (depth[i] + 1) / 2;
         g.globalAlpha = 0.1 + near * near * 0.8;
         const s = ss[i] * (1.6 + near * 2.2);
         g.drawImage(img, sx[i] - s / 2, sy[i] - s / 2, s, s);
@@ -342,7 +371,12 @@ export default function Blob({ open, listening, onToggle, hint }) {
       }
       drag.current = null;
       from = null;
-      if (tap) onToggle?.();
+      if (tap) {
+        dismissTip();
+        onToggle?.();
+        // Kill browser focus chrome on the hit button — it painted as a flat disc.
+        try { node.blur(); } catch { /* */ }
+      }
     };
     node.addEventListener("pointerdown", down);
     node.addEventListener("pointermove", move);
@@ -355,6 +389,10 @@ export default function Blob({ open, listening, onToggle, hint }) {
       node.removeEventListener("pointercancel", up);
     };
   }, [onToggle]);
+
+  useEffect(() => {
+    if (open || listening) dismissTip();
+  }, [open, listening]);
 
   // Keep it on screen when the window resizes under it. A position the
   // dispatcher chose is theirs and only ever gets clamped; one nobody chose
@@ -373,6 +411,8 @@ export default function Blob({ open, listening, onToggle, hint }) {
     return () => removeEventListener("resize", fit);
   }, []);
 
+  const showTip = tip && !open && !listening;
+
   return (
     <div
       className={`blob${open ? " open" : ""}${listening ? " live" : ""}`}
@@ -380,6 +420,20 @@ export default function Blob({ open, listening, onToggle, hint }) {
       style={{ width: BOX, height: BOX }}
     >
       <canvas ref={cv} width={BOX} height={BOX} aria-hidden="true" />
+      {showTip && (
+        <button
+          type="button"
+          className="blob-tip"
+          onClick={() => {
+            dismissTip();
+            if (onOpenAsk) onOpenAsk();
+            else onToggle?.();
+          }}
+        >
+          <b>Talk to the board</b>
+          Tap the orb to speak — or open Ask in the header to type.
+        </button>
+      )}
       <button
         ref={hit}
         className="blob-hit"
@@ -389,14 +443,16 @@ export default function Blob({ open, listening, onToggle, hint }) {
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
+            dismissTip();
             onToggle?.();
+            try { e.currentTarget.blur(); } catch { /* */ }
           }
         }}
         title={
           hint ||
           (listening
-            ? "Listening — tap to stop  ·  drag to move"
-            : "Tap to talk to the briefing officer  ·  drag to move")
+            ? "Listening — tap to stop · drag to move"
+            : "Tap to talk · Ask in the header to type")
         }
         aria-label={listening ? "Stop listening" : "Talk to the briefing officer"}
         aria-pressed={!!listening}
