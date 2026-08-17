@@ -3384,17 +3384,20 @@ body.resizing-v { cursor: ns-resize; user-select: none; }
   border: 0;
 }
 
-/* Soft first-run tip parked by the orb — dismisses itself after use. */
+/* Soft first-run tip — ABOVE the orb only. Never to the left (that covered Evidence). */
 .blob-tip {
   position: absolute;
-  right: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
-  max-width: 168px;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  right: auto;
+  top: auto;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(200px, 42vw);
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
-  background: var(--panel, var(--raised));
+  background: var(--surface);
   color: var(--text-2);
   font-size: 11px;
   line-height: 1.4;
@@ -3403,6 +3406,8 @@ body.resizing-v { cursor: ns-resize; user-select: none; }
   cursor: pointer;
   font-family: var(--font-data);
   white-space: normal;
+  z-index: 2;
+  box-shadow: none;
 }
 .blob-tip:hover { border-color: var(--silver); color: var(--text); }
 .blob-tip b {
@@ -3411,25 +3416,23 @@ body.resizing-v { cursor: ns-resize; user-select: none; }
   font-weight: 600;
   margin-bottom: 2px;
 }
-@media (max-width: 720px) {
-  .blob-tip {
-    right: auto;
-    left: 50%;
-    top: auto;
-    bottom: calc(100% + 8px);
-    transform: translateX(-50%);
-    max-width: 200px;
-  }
-}
 
+/* Children must participate in .shell's grid rows (stage + timeline).
+   A block wrapper collapsed timeline into the stage row and broke the board. */
+.desk-dispatch {
+  display: contents;
+}
 .desk-dispatch.is-parked {
-  position: absolute !important;
+  display: block !important;
+  position: fixed !important;
+  left: -9999px !important;
+  top: 0 !important;
   width: 1px !important;
   height: 1px !important;
   overflow: hidden !important;
-  clip: rect(0 0 0 0);
-  pointer-events: none;
-  opacity: 0;
+  pointer-events: none !important;
+  opacity: 0 !important;
+  z-index: -1;
 }
 
 /* ------------------------------------------------------------- the guide --

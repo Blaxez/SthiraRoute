@@ -117,7 +117,15 @@ function levelOf(node) {
 }
 
 function defaultPark() {
-  return { x: innerWidth - BOX / 2 - 22, y: innerHeight - BOX / 2 - 22 };
+  // Sit on the map's lower-right, clear of the Evidence column (.ev).
+  const ev = typeof document !== "undefined" ? document.querySelector(".ev") : null;
+  const evW = ev ? Math.ceil(ev.getBoundingClientRect().width) : 320;
+  const timeline = typeof document !== "undefined" ? document.querySelector(".timeline") : null;
+  const tlH = timeline ? Math.ceil(timeline.getBoundingClientRect().height) : 96;
+  return {
+    x: Math.max(BOX / 2 + MARGIN, innerWidth - evW - BOX / 2 - 18),
+    y: Math.max(BOX / 2 + MARGIN, innerHeight - tlH - BOX / 2 - 14),
+  };
 }
 
 /** Has the dispatcher ever put it somewhere on purpose? */
@@ -198,19 +206,20 @@ export default function Blob({ open, listening, onToggle, onOpenAsk, hint }) {
     let raf = 0;
     let idleFrames = 0;
     // Cache panel rects — querying layout every frame thrashed the map + voice path.
-    let askEl = null;
-    let lpEl = null;
     let askBox = null;
     let lpBox = null;
+    let evBox = null;
     let boxAt = 0;
 
     const refreshBoxes = (now) => {
       if (now - boxAt < 200 && askBox !== undefined) return;
       boxAt = now;
-      askEl = openRef.current ? document.querySelector(".ask") : null;
-      lpEl = document.querySelector(".lp");
+      const askEl = openRef.current ? document.querySelector(".ask") : null;
+      const lpEl = document.querySelector(".lp");
+      const evEl = document.querySelector(".ev");
       askBox = askEl ? askEl.getBoundingClientRect() : null;
       lpBox = lpEl ? lpEl.getBoundingClientRect() : null;
+      evBox = evEl ? evEl.getBoundingClientRect() : null;
     };
 
     const frame = (now) => {
@@ -247,6 +256,11 @@ export default function Blob({ open, listening, onToggle, onOpenAsk, hint }) {
       }
 
       // ---- where should it sit ----------------------------------------
+      // Recompute home when the dispatcher never parked it — so Evidence /
+      // timeline size changes do not leave the orb sitting on the KPIs.
+      if (!placed.current && !drag.current) {
+        park.current = defaultPark();
+      }
       const f = focusRect.current;
       let want = park.current;
       if (f) {
@@ -258,7 +272,7 @@ export default function Blob({ open, listening, onToggle, onOpenAsk, hint }) {
         });
       }
       refreshBoxes(now);
-      for (const b of [askBox, lpBox]) {
+      for (const b of [askBox, lpBox, evBox]) {
         if (!b) continue;
         want = shove(want, {
           x0: b.left - R - 14,
@@ -394,6 +408,31 @@ export default function Blob({ open, listening, onToggle, onOpenAsk, hint }) {
     if (open || listening) dismissTip();
   }, [open, listening]);
 
+  // Auto-clear the tip so it cannot sit on the board for a whole demo.
+  useEffect(() => {
+    if (!tip) return undefined;
+    const t = setTimeout(dismissTip, 10000);
+    return () => clearTimeout(t);
+  }, [tip]);
+
+  // One-time: forget a corner park that landed on the Evidence column.
+  useEffect(() => {
+    if (!placed.current) return;
+    const ev = document.querySelector(".ev");
+    if (!ev) return;
+    const b = ev.getBoundingClientRect();
+    if (
+      park.current.x > b.left - R &&
+      park.current.x < b.right + R &&
+      park.current.y > b.top - R &&
+      park.current.y < b.bottom + R
+    ) {
+      placed.current = false;
+      park.current = defaultPark();
+      try { localStorage.removeItem("sr.blob"); } catch { /* */ }
+    }
+  }, []);
+
   // Keep it on screen when the window resizes under it. A position the
   // dispatcher chose is theirs and only ever gets clamped; one nobody chose
   // goes back to its corner, instead of being left stranded mid-board by a
@@ -431,7 +470,7 @@ export default function Blob({ open, listening, onToggle, onOpenAsk, hint }) {
           }}
         >
           <b>Talk to the board</b>
-          Tap the orb to speak — or open Ask in the header to type.
+          Tap the orb to speak, or Ask to type.
         </button>
       )}
       <button
